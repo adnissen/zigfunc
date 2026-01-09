@@ -255,54 +255,65 @@ fn runRefactoring(
         }
 
         for (result.call_sites.items) |site| {
-            const action: types.UserAction = if (accept_all)
-                .accept
-            else
-                try promptForAction(allocator, term, site, source, config);
+            // Inner loop allows re-prompting when edit is cancelled
+            while (true) {
+                const action: types.UserAction = if (accept_all)
+                    .accept
+                else
+                    try promptForAction(allocator, term, site, source, config);
 
-            switch (action) {
-                .quit => {
-                    // Apply pending edits before quitting
-                    if (file_edits.items.len > 0) {
-                        try editor.applyEdits(allocator, file_path, file_edits.items);
-                        stats.files_modified += 1;
-                    }
-                    printStats(stats);
-                    return;
-                },
-                .skip => {
-                    stats.call_sites_skipped += 1;
-                    print("Skipped\n", .{});
-                },
-                .accept_all => {
-                    accept_all = true;
-                    const edit_result = try generateEdit(allocator, site, source, config, config.default_value.?);
-                    if (edit_result) |e| {
-                        try file_edits.append(allocator, e);
-                        stats.call_sites_modified += 1;
-                        print("{s}Updated{s}\n", .{ terminal.Color.green, terminal.Color.reset });
-                    }
-                },
-                .accept => {
-                    const edit_result = try generateEdit(allocator, site, source, config, config.default_value.?);
-                    if (edit_result) |e| {
-                        try file_edits.append(allocator, e);
-                        stats.call_sites_modified += 1;
-                        print("{s}Updated{s}\n", .{ terminal.Color.green, terminal.Color.reset });
-                    }
-                },
-                .edit => {
-                    print("Enter value: ", .{});
-                    const custom_value = try term.readLine(allocator);
-                    defer allocator.free(custom_value);
+                switch (action) {
+                    .quit => {
+                        // Apply pending edits before quitting
+                        if (file_edits.items.len > 0) {
+                            try editor.applyEdits(allocator, file_path, file_edits.items);
+                            stats.files_modified += 1;
+                        }
+                        printStats(stats);
+                        return;
+                    },
+                    .skip => {
+                        stats.call_sites_skipped += 1;
+                        print("Skipped\n", .{});
+                        break;
+                    },
+                    .accept_all => {
+                        accept_all = true;
+                        const edit_result = try generateEdit(allocator, site, source, config, config.default_value.?);
+                        if (edit_result) |e| {
+                            try file_edits.append(allocator, e);
+                            stats.call_sites_modified += 1;
+                            print("{s}Updated{s}\n", .{ terminal.Color.green, terminal.Color.reset });
+                        }
+                        break;
+                    },
+                    .accept => {
+                        const edit_result = try generateEdit(allocator, site, source, config, config.default_value.?);
+                        if (edit_result) |e| {
+                            try file_edits.append(allocator, e);
+                            stats.call_sites_modified += 1;
+                            print("{s}Updated{s}\n", .{ terminal.Color.green, terminal.Color.reset });
+                        }
+                        break;
+                    },
+                    .edit => {
+                        print("Enter value: ", .{});
+                        const custom_value = try term.readLine(allocator) orelse {
+                            // Escape pressed - return to prompt
+                            print("\n", .{});
+                            continue;
+                        };
+                        defer allocator.free(custom_value);
 
-                    const edit_result = try generateEdit(allocator, site, source, config, custom_value);
-                    if (edit_result) |e| {
-                        try file_edits.append(allocator, e);
-                        stats.call_sites_modified += 1;
-                        print("{s}Updated{s}\n", .{ terminal.Color.green, terminal.Color.reset });
-                    }
-                },
+                        const edit_result = try generateEdit(allocator, site, source, config, custom_value);
+                        if (edit_result) |e| {
+                            try file_edits.append(allocator, e);
+                            stats.call_sites_modified += 1;
+                            print("{s}Updated{s}\n", .{ terminal.Color.green, terminal.Color.reset });
+                        }
+                        break;
+                    },
+                }
             }
         }
 
@@ -342,15 +353,12 @@ fn promptForAction(
         site.line, site.column,
     });
 
-    // Show context (2 lines before and after)
-    displayContext(source, site);
-
     // Show current and proposed
-    const proposed = try editor.generateProposedCall(allocator, site, source, config.mode, config.position, config.default_value);
+    const proposed = try editor.generateProposedCall(allocator, site, source, config.mode, config.position, config.default_value, terminal.Color.green, terminal.Color.reset);
     defer allocator.free(proposed);
 
     print("\nCurrent:  {s}{s}{s}\n", .{ terminal.Color.dim, site.original_call, terminal.Color.reset });
-    print("Proposed: {s}{s}{s}\n", .{ terminal.Color.green, proposed, terminal.Color.reset });
+    print("Proposed: {s}\n", .{proposed});
 
     // Prompt
     print("\n[{s}a{s}]ccept  [{s}e{s}]dit  [{s}s{s}]kip  [{s}A{s}]ll  [{s}q{s}]uit: ", .{
@@ -368,37 +376,9 @@ fn promptForAction(
             'e' => .edit,
             's' => .skip,
             'A' => .accept_all,
-            'q' => .quit,
+            'q', 3 => .quit, // 3 = Ctrl-C
             else => continue,
         };
-    }
-}
-
-fn displayContext(source: [:0]const u8, site: types.CallSite) void {
-    const context_before = 2;
-    const context_after = 2;
-    const start_line = if (site.line > context_before) site.line - context_before else 1;
-    const end_line = site.line + context_after;
-
-    var lines = std.mem.splitScalar(u8, source, '\n');
-    var current_line: usize = 1;
-
-    while (lines.next()) |line| {
-        if (current_line >= start_line and current_line <= end_line) {
-            const marker: []const u8 = if (current_line == site.line) ">" else " ";
-            const color_start: []const u8 = if (current_line == site.line) terminal.Color.yellow else terminal.Color.dim;
-            const color_end = terminal.Color.reset;
-
-            print("{s}{s} {d:4} | {s}{s}\n", .{
-                color_start,
-                marker,
-                current_line,
-                line,
-                color_end,
-            });
-        }
-        current_line += 1;
-        if (current_line > end_line) break;
     }
 }
 

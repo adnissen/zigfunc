@@ -77,31 +77,15 @@ pub const RawTerminal = struct {
         return buf[0];
     }
 
-    /// Temporarily restore canonical mode and read a line
-    pub fn readLine(self: *RawTerminal, allocator: std.mem.Allocator) ![]const u8 {
-        if (self.original_termios) |orig| {
-            // Temporarily restore canonical mode for line input
-            var temp = orig;
-            temp.lflag.ECHO = true;
-            temp.lflag.ICANON = true;
-            posix.tcsetattr(self.stdin_fd, .FLUSH, temp) catch {};
-
-            defer {
-                // Restore raw mode
-                var raw = orig;
-                raw.lflag.ICANON = false;
-                raw.lflag.ECHO = false;
-                raw.lflag.ISIG = false;
-                raw.cc[@intFromEnum(posix.V.MIN)] = 1;
-                raw.cc[@intFromEnum(posix.V.TIME)] = 0;
-                posix.tcsetattr(self.stdin_fd, .FLUSH, raw) catch {};
-            }
-        }
-
+    /// Read a line with manual echo (works in raw mode)
+    /// Returns null if Escape is pressed (to cancel input)
+    pub fn readLine(self: *RawTerminal, allocator: std.mem.Allocator) !?[]const u8 {
         var line: std.ArrayList(u8) = .{};
         errdefer line.deinit(allocator);
 
-        // Read from stdin using posix.read
+        const stdout_fd = posix.STDOUT_FILENO;
+
+        // Read from stdin and manually echo each character
         var buf: [1]u8 = undefined;
         while (true) {
             const n = try posix.read(self.stdin_fd, &buf);
@@ -111,8 +95,27 @@ pub const RawTerminal = struct {
                 }
                 return error.EndOfFile;
             }
-            if (buf[0] == '\n') break;
-            try line.append(allocator, buf[0]);
+            if (buf[0] == 27) {
+                // Escape key - cancel input
+                line.deinit(allocator);
+                return null;
+            }
+            if (buf[0] == '\n') {
+                // Echo newline and break
+                _ = posix.write(stdout_fd, "\n") catch {};
+                break;
+            }
+            if (buf[0] == 127 or buf[0] == 8) {
+                // Handle backspace
+                if (line.items.len > 0) {
+                    _ = line.pop();
+                    _ = posix.write(stdout_fd, "\x08 \x08") catch {}; // backspace, space, backspace
+                }
+            } else if (buf[0] >= 32) {
+                // Echo printable characters
+                try line.append(allocator, buf[0]);
+                _ = posix.write(stdout_fd, &buf) catch {};
+            }
         }
 
         return try line.toOwnedSlice(allocator);

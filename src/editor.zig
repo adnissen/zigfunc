@@ -179,6 +179,7 @@ pub fn applyEdits(allocator: std.mem.Allocator, file_path: []const u8, edits: []
 }
 
 /// Generate the proposed call text after applying an edit
+/// If highlight_start/highlight_end are provided, the new/changed part will be wrapped with them
 pub fn generateProposedCall(
     allocator: std.mem.Allocator,
     site: types.CallSite,
@@ -186,6 +187,8 @@ pub fn generateProposedCall(
     mode: types.Mode,
     position: types.Position,
     value: ?[]const u8,
+    highlight_start: ?[]const u8,
+    highlight_end: ?[]const u8,
 ) ![]const u8 {
     // Get the function name part (everything before lparen)
     const fn_start = blk: {
@@ -218,7 +221,9 @@ pub fn generateProposedCall(
                     if (result.items.len > 0 and result.items[result.items.len - 1] != '(') {
                         try result.appendSlice(allocator, ", ");
                     }
+                    if (highlight_start) |hs| try result.appendSlice(allocator, hs);
                     try result.appendSlice(allocator, value.?);
+                    if (highlight_end) |he| try result.appendSlice(allocator, he);
                     if (arg_idx < site.arg_spans.len) {
                         try result.appendSlice(allocator, ", ");
                     }
