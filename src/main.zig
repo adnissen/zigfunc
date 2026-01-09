@@ -21,7 +21,7 @@ fn printErr(comptime fmt: []const u8, args: anytype) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -350,7 +350,7 @@ fn promptForAction(
     // Display file path in cyan
     print("\n{s}{s}{s}:{d}:{d}\n", .{
         terminal.Color.cyan, site.file_path, terminal.Color.reset,
-        site.line, site.column,
+        site.line,           site.column,
     });
 
     // Show current and proposed
