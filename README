@@ -1,0 +1,20 @@
+Usage: zigfunc [OPTIONS]
+
+A tool to refactor function call sites in Zig code.
+
+OPTIONS:
+  --fn <name>       Name of the function to refactor (required)
+  --arg <value>     Default value for new argument (add mode)
+  --pos <N|last>    Argument position (0-indexed, or "last")
+  --remove <N>      Remove argument at position N (remove mode)
+  --dir <path>      Directory to scan (default: current directory)
+  --help, -h        Show this help message
+
+MODES:
+  Add mode:    --fn <name> --arg <value> --pos <position>
+  Remove mode: --fn <name> --remove <position>
+
+EXAMPLES:
+  zigfunc --fn allocPrint --arg allocator --pos 0 --dir ./src
+  zigfunc --fn foo --arg "null" --pos last
+  zigfunc --fn bar --remove 1 --dir ./lib
